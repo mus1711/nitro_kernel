@@ -363,7 +363,7 @@ static int ext4_valid_extent(struct inode *inode, struct ext4_extent *ext)
 	ext4_lblk_t lblock = le32_to_cpu(ext->ee_block);
 	ext4_lblk_t last = lblock + len - 1;
 
-	if (lblock > last)
+	if (len == 0 || lblock > last)
 		return 0;
 	return ext4_data_block_valid(EXT4_SB(inode->i_sb), block, len);
 }
@@ -1767,7 +1767,8 @@ static void ext4_ext_try_to_merge_up(handle_t *handle,
 
 	brelse(path[1].p_bh);
 	ext4_free_blocks(handle, inode, NULL, blk, 1,
-			 EXT4_FREE_BLOCKS_METADATA | EXT4_FREE_BLOCKS_FORGET);
+			 EXT4_FREE_BLOCKS_METADATA | EXT4_FREE_BLOCKS_FORGET |
+			 EXT4_FREE_BLOCKS_RESERVE);
 }
 
 /*
@@ -2418,6 +2419,15 @@ int ext4_ext_index_trans_blocks(struct inode *inode, int nrblocks, int chunk)
 	return index;
 }
 
+static inline int get_default_free_blocks_flags(struct inode *inode)
+{
+	if (S_ISDIR(inode->i_mode) || S_ISLNK(inode->i_mode))
+		return EXT4_FREE_BLOCKS_METADATA | EXT4_FREE_BLOCKS_FORGET;
+	else if (ext4_should_journal_data(inode))
+		return EXT4_FREE_BLOCKS_FORGET;
+	return 0;
+}
+
 static int ext4_remove_blocks(handle_t *handle, struct inode *inode,
 			      struct ext4_extent *ex,
 			      ext4_fsblk_t *partial_cluster,
@@ -2426,12 +2436,7 @@ static int ext4_remove_blocks(handle_t *handle, struct inode *inode,
 	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
 	unsigned short ee_len =  ext4_ext_get_actual_len(ex);
 	ext4_fsblk_t pblk;
-	int flags = 0;
-
-	if (S_ISDIR(inode->i_mode) || S_ISLNK(inode->i_mode))
-		flags |= EXT4_FREE_BLOCKS_METADATA | EXT4_FREE_BLOCKS_FORGET;
-	else if (ext4_should_journal_data(inode))
-		flags |= EXT4_FREE_BLOCKS_FORGET;
+	int flags = get_default_free_blocks_flags(inode);
 
 	/*
 	 * For bigalloc file systems, we never free a partial cluster
@@ -2699,10 +2704,7 @@ ext4_ext_rm_leaf(handle_t *handle, struct inode *inode,
 	if (*partial_cluster && ex >= EXT_FIRST_EXTENT(eh) &&
 	    (EXT4_B2C(sbi, ext4_ext_pblock(ex) + ex_ee_len - 1) !=
 	     *partial_cluster)) {
-		int flags = EXT4_FREE_BLOCKS_FORGET;
-
-		if (S_ISDIR(inode->i_mode) || S_ISLNK(inode->i_mode))
-			flags |= EXT4_FREE_BLOCKS_METADATA;
+		int flags = get_default_free_blocks_flags(inode);
 
 		ext4_free_blocks(handle, inode, NULL,
 				 EXT4_C2B(sbi, *partial_cluster),
@@ -2933,10 +2935,8 @@ again:
 	 * even the first extent, then we should free the blocks in the partial
 	 * cluster as well. */
 	if (partial_cluster && path->p_hdr->eh_entries == 0) {
-		int flags = EXT4_FREE_BLOCKS_FORGET;
 
-		if (S_ISDIR(inode->i_mode) || S_ISLNK(inode->i_mode))
-			flags |= EXT4_FREE_BLOCKS_METADATA;
+		int flags = get_default_free_blocks_flags(inode);
 
 		ext4_free_blocks(handle, inode, NULL,
 				 EXT4_C2B(EXT4_SB(sb), partial_cluster),

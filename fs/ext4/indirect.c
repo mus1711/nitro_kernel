@@ -577,7 +577,7 @@ int ext4_ind_map_blocks(handle_t *handle, struct inode *inode,
 				       EXT4_FEATURE_RO_COMPAT_BIGALLOC)) {
 		EXT4_ERROR_INODE(inode, "Can't allocate blocks for "
 				 "non-extent mapped inodes with bigalloc");
-		return -ENOSPC;
+		return -EUCLEAN;
 	}
 
 	goal = ext4_find_goal(inode, map->m_lblk, partial);
@@ -946,11 +946,13 @@ static int ext4_clear_blocks(handle_t *handle, struct inode *inode,
 			     __le32 *last)
 {
 	__le32 *p;
-	int	flags = EXT4_FREE_BLOCKS_FORGET | EXT4_FREE_BLOCKS_VALIDATED;
+	int	flags = EXT4_FREE_BLOCKS_VALIDATED;
 	int	err;
 
 	if (S_ISDIR(inode->i_mode) || S_ISLNK(inode->i_mode))
-		flags |= EXT4_FREE_BLOCKS_METADATA;
+		flags |= EXT4_FREE_BLOCKS_FORGET | EXT4_FREE_BLOCKS_METADATA;
+	else if (ext4_should_journal_data(inode))
+		flags |= EXT4_FREE_BLOCKS_FORGET;
 
 	if (!ext4_data_block_valid(EXT4_SB(inode->i_sb), block_to_free,
 				   count)) {
